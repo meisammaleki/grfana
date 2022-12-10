@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-pv-claim
+  annotations :
+    volume.beta.kubernetes.io/storage-class : glusterfs-storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    app.kubernetes.io/component: grafana
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: kube-prometheus
+    app.kubernetes.io/version: 9.1.2
+  name: grafana-datasources
+stringData:
+  datasources.yaml: |-
+    { 
+        "apiVersion": 1,
+        "datasources": [
+            {
+                "access": "proxy",
+                "editable": false,
+                "name": "prometheus",
+                "orgId": 1,
+                "type": "prometheus",
+                "url": "http://172.16.4.247:30800",
+                "version": 1
+            }
+        ]
+    }
+
+type: Opaque
+---
+apiVersion: v1
+data:
+  dashboards.yaml: |-
+    {
+        "apiVersion": 1,
+        "providers": [
+            {
+                "folder": "Default",
+                "folderUid": "",
+                "name": "0",
+                "options": {
+                    "path": "/grafana-dashboard-definitions/0"
+                },
+                "orgId": 1,
+                "type": "file"
+            }
+        ]
+    }
+kind: ConfigMap
+metadata:
+  labels:
+    app.kubernetes.io/component: grafana
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: kube-prometheus
+    app.kubernetes.io/version: 9.1.4
+  name: grafana-dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels :
+    app.kubernetes.io/component : grafana
+    app.kubernetes.io/name : grafana
+    app.kubernetes.io/part-of : kube-prometheus
+    app.kubernetes.io/version : 9.1.2
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      name: grafana
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:9.1.2
+        ports:
+        - name: grafana
+          containerPort: 3000
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          runAsUser: 0
+        volumeMounts:
+        - mountPath: /var/lib/grafana
+          name: grafana-storage
+          readOnly: false
+        - mountPath: /etc/grafana/provisioning/datasources
+          name: grafana-datasources
+          readOnly: false
+        - mountPath : /etc/grafana/provisioning/dashboards
+          name : grafana-dashboards
+          readOnly : false
+      serviceAccountName: grafana
+      volumes:
+        - name: grafana-storage
+          persistentVolumeClaim:
+            claimName: grafana-pv-claim
+        - name: grafana-datasources
+          secret:
+            secretName: grafana-datasources
+        - configMap :
+            name : grafana-dashboards
+          name : grafana-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  selector:
+    app: grafana
+  ports:
+  - name: grafana
+    protocol: TCP
+    port: 3000
+    targetPort: 3000
+  type: NodePort
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: myingressroute
+spec:
+  routes:
+  - kind: Rule
+    match: Host(`lab.grafana.com`)
+    services:
+    - kind: Service
+      name: grafana
+#      passHostHeader: true
+      port: 3000
+#  entryPoints:
+#    - tcpep
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/component: grafana
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: kube-prometheus
+    app.kubernetes.io/version: 9.1.2
+  name: grafana
